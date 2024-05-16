@@ -1,0 +1,467 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# I- Imports des packages et des données
+
+```{r}
+library('dplyr')
+library('stringr')
+library("ggplot2")
+library("stringi")
+library("tidyr")
+library("plm")
+library("stargazer")
+```
+
+```{r}
+top <- read.csv('/Users/cocoticota/Dropbox/ENSAE/tops.csv', sep = ";")
+noms <- read.csv('/Users/cocoticota/Dropbox/ENSAE/noms.csv', sep = ";")
+art <- read.csv('/Users/cocoticota/Dropbox/ENSAE/artistes.csv', sep = ";", fileEncoding = "UTF-8")
+lyrics <- read.csv('/Users/cocoticota/Dropbox/ENSAE/tops_paroles.csv', sep = ",")
+```
+
+```{r}
+lyrics$nb <- str_count(lyrics$paroles, "\\S+")
+lyrics <- lyrics %>% 
+  select(Titre, nb)
+top <- top %>% 
+  left_join(lyrics, by = "Titre") %>% 
+  distinct()
+
+```
+
+```{r}
+top <- top %>% 
+  rename(soc = X,
+         pol = X.1)
+```
+
+```{r}
+top2 <- top %>% 
+  filter(!(Annee == 2019 & Pos. > 150)) %>% 
+  filter(!(Annee > 2019 & Pos. > 100))
+```
+
+```{r}
+spelling_variants <- function(x, remove_collabs = TRUE, remove_parentheses = TRUE) {
+  # Remplacer les caractères invalides
+  x <- iconv(x, to = "UTF-8", sub = "byte")
+  
+  qualifiers <- c(" feat .*", " feat[.].*", " ft.*", " ft[.].*"," featuring.*"," vs[.].*"," vs.*"," versus.*"," with.*","[-].*"," / .*", 
+                 "/.*","[|].*", "[[].*[]]", "[)].*", ";.*","[+].*","[&] .*","[&].*",",.*"," and .*", " con .*", " e .*", " et .*",
+                 " x .*")
+  
+  # Supprimer les articles (a, the)
+  ret <- gsub(" a ", "", tolower(str_trim(x)))
+  
+  removes <- c("the ", # article
+               "^[(][[:digit:]]+[)]", # digits wrapped in parentheses at beginning of string
+               "^[#][[:digit:]]{1,5}[[:punct:]|[:space:]]", # digits lead by # at beginning of string
+               "^[0][[:digit:]]{1,2}[[:punct:]|[:space:]]", # digits lead by 0 at beginning of string
+               "^[[:digit:]]{1,3}[[:punct:]|[:space:]]", # digits at the beginning of a string if they are followed by a punctuation mark (e.g., 12 - Hello keeps Hello)
+               "[[:digit:]]{2}[[:punct:]][[:digit:]]{2}[[:punct:]][[:digit:]]{2,4}") # date-type objects
+  
+  for (rem in removes) ret <- str_trim(gsub(rem,'',ret))
+  
+  # Supprimer le tiret s'il se produit dans les trois premiers caractères (par exemple, "JAY-Z")
+  ret <- gsub('(^[a-z]{0,3})([-])', '\\1', ret)
+  
+  # Supprimer les caractères spéciaux (par exemple, - Jodeli -) au début et à la fin d'une chaîne
+  for (i in 1:5) {
+    first_char <- substr(ret, 1, 1)
+    last_char <- substr(stri_reverse(ret), 1, 1)
+    eval_condition <- grepl('[[:punct:]]{2}', paste0(first_char, last_char))
+    start_char <- ifelse(eval_condition == TRUE, 2, 1)
+    end_char <- ifelse(eval_condition == TRUE, nchar(ret) - 1, nchar(ret))
+    ret <- str_trim(substr(ret, start_char, end_char))
+  }
+  
+  if(remove_parentheses == TRUE) {
+    # Supprimer le contenu entre parenthèses, sauf s'il est au début d'une chaîne
+    ret <- gsub('(?<!^)[(].*','', ret, perl = TRUE)
+  }
+  
+  # Supprimer le tiret/+/[ au début de la chaîne
+  ret <- gsub('^[-]|^[+]|^[[]','', ret)
+  
+  if(remove_collabs == TRUE) {
+    # Supprimer les collaborations
+    for (qual in qualifiers) ret <- sub(qual, "", str_trim(ret))
+  }
+  
+  ret <- str_trim(sub("30 ", "thirty ", ret))
+  
+  ret <- str_trim(gsub("[^0-9A-Za-z ]", "", ret))
+  for (i in 1:5) ret <- str_trim(gsub("  ", " ", ret)) # Supprimer les espaces blancs entre les caractères
+  return(ret)
+}
+
+
+noms$nom <- sapply(noms$art, spelling_variants)
+# Conserver uniquement un exemplaire de chaque nom unique
+unique_names <- unique(noms$nom)
+
+# Créer un dataframe vide pour stocker les données filtrées
+unique_data <- data.frame(nom = character(0), nom_original = character(0), stringsAsFactors = FALSE)
+
+# Parcourir chaque nom unique
+for (name in unique_names) {
+  # Trouver la première occurrence du nom dans le dataframe original
+  first_occurrence <- noms[noms$nom == name, ][1, ]
+  # Ajouter cette occurrence au dataframe unique_data
+  unique_data <- rbind(unique_data, first_occurrence)
+}
+
+# Réinitialiser les indices des lignes
+rownames(unique_data) <- NULL
+
+
+```
+
+```{r}
+noms <- noms %>% 
+  select(-c("genre","sexe"))
+art <- art %>% 
+  select(-"art")
+```
+
+```{r}
+names <- noms %>% 
+  left_join(art, by ="nom") %>% 
+  rename(Artiste = art) %>% 
+  distinct()
+```
+
+```{r}
+douze <- top2 %>% 
+  filter(Annee == 2022 & genre == "2") %>% 
+  distinct(Titre)
+```
+
+```{r}
+top2 <- top2 %>% 
+  left_join(names, by = "Artiste") %>% 
+  distinct(Pos., Annee, .keep_all = TRUE)
+
+top <- top2
+```
+
+```{r}
+
+```
+
+```{r}
+
+top <- top %>% 
+  mutate(carrière = ifelse(carrière == 0, Annee, carrière))
+# Créer une nouvelle colonne "derniere_annee" avec l'année de la dernière apparition de chaque nom
+top <- top %>%
+  arrange(nom, Annee) %>%
+  group_by(nom) %>%
+  mutate(last = dplyr::lag(Annee),
+         last = ifelse(is.na(last) | last == Annee, dplyr::lag(last), last),
+         temps = Annee - last ) %>%
+  ungroup()
+
+```
+
+```{r}
+top <- top %>% 
+  filter(genre %in% c(1,2,3)) %>% 
+  mutate(
+    since = ifelse(is.na(last), 10L, Annee - last),
+    start = ifelse(carrière == 0L, 0L, Annee - carrière)
+  ) %>% 
+  distinct()
+```
+
+```{r}
+top <- top %>% 
+  mutate(
+    election = if_else(Annee %in% c(2007, 2012, 2017,2022), 1, 0),
+    mvt = if_else(Annee %in% c(2010,2018, 2023), 1, 0)
+  )
+```
+
+```{r}
+write.csv2(unique_data, file = "/Users/cocoticota/Dropbox/ENSAE/S5/Projet/artistes.csv", sep = ";" )
+```
+
+```{r}
+top_test2 <- top %>% 
+  left_join(noms, by = c('Artiste' = 'art')) %>% 
+  filter(Annee > 2011) %>% 
+  mutate(
+    
+    genre = factor(replace(genre, is.na(genre),0)),
+    sexe = factor(replace(sexe, is.na(sexe),0)), 
+    Annee = as.character(Annee),
+   
+  )
+
+evo2 <- top_test2 %>% 
+  group_by(Annee, genre) %>% 
+  summarize(
+    total = n(),
+  )
+evo2 <- evo2 %>% 
+  mutate(genre = case_when(
+    genre == 1 ~ "3. Chanson francophone",
+    genre == 2 ~ "1. Rap francophone",
+    genre == 3 ~ "2. Collaboration rap fr",
+    TRUE ~ '4. Non francophone'
+  ),
+         Annee = as.character(Annee))
+
+```
+
+```{r}
+top_test <- topfr %>% 
+  filter(Annee > 2006 & Pos. < 101) %>% 
+  mutate(
+    pol = (replace(as.numeric(pol), is.na(as.numeric(pol)),0)),
+    soc = (replace(as.numeric(soc), is.na(as.numeric(soc)),0)),
+    genre = factor(replace(genre, is.na(genre),0)),
+    sexe = factor(replace(sexe, is.na(sexe),0)), 
+    Annee = as.character(Annee),
+    soc_pos =  if_else(soc > 0, 1, 0),
+   pol_pos = if_else(pol > 0, 1, 0)
+  )
+
+```
+
+```{r}
+evo <- top_test %>% 
+  group_by(Annee, genre) %>% 
+  summarize(
+    total = n(),
+    pol = sum(pol),
+    soc = sum(soc),
+    moy_pol = mean(pol),
+    moy_soc = mean(soc),
+    pol_pos = sum(pol_pos),
+    soc_pos = sum(soc_pos)
+  )
+evo <- evo %>% 
+  mutate(genre = case_when(
+    genre == 1 ~ "3. Chanson francophone",
+    genre == 2 ~ "1. Rap francophone",
+    genre == 3 ~ "2. Collaboration rap fr",
+    TRUE ~ '4. Non francophone'
+  ),
+         Annee = as.character(Annee))
+```
+
+```{r}
+ggplot(evo2) +
+ aes(x = Annee, fill = genre, weight = total) +
+ geom_bar() +
+ scale_fill_brewer(palette = "RdBu", 
+ direction = 1) +
+ labs(y = "Nombre de titres", title = "Rap et chanson francophone dans le top 200 en France depuis 2007", 
+ fill = "Genre") +
+ theme_minimal()
+```
+
+```{r}
+pol <- top_test %>% 
+  filter(genre == "1" | genre == "2") %>% 
+  mutate(Genre = if_else(genre == "1", "Chanson francophone", "Rap francophone")) %>% 
+  group_by(Annee, Genre) %>% 
+  summarize(pol = sum(pol_pos),
+            n = n(), 
+            soc = sum(soc_pos))
+
+
+
+ggplot(pol) +
+ aes(x = Annee, y = pol, fill = Genre, group = Genre) +
+ geom_col() +
+ scale_fill_hue(direction = 1) +
+  labs(
+    y = "Nombre de titres",
+    title = "Titres francophones contenant des paroles politiques",
+    fill = "Genre"
+  ) +
+ theme_minimal()
+
+
+```
+
+```{r}
+rap <- top_test %>% 
+  filter(genre != "0" & genre != "1") %>% 
+  group_by(Annee, pol_pos) %>% 
+  summarize(total = n()) %>% 
+  mutate(pol_pos = if_else(pol_pos == 0, "1. Pas de contenu politique", "2. Contenu politique"))
+
+ggplot(rap) +
+ aes(x = Annee, y = total, fill = pol_pos) +
+ geom_col() +
+ scale_fill_manual(values = c(`1. Pas de contenu politique` = "#ebd8c8", 
+`2. Contenu politique` = "#9d73cd")) +
+  labs(
+    y = "Nombre de titres",
+    title = "Rap francophone et contenu politique depuis 2007 dans le top 100",
+    fill = "Contenu"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+rap <- top_test %>% 
+  filter(genre != "1" & genre != "0") %>% 
+  group_by(Annee, soc_pos) %>% 
+  summarize(total = n()) %>% 
+  mutate(soc_pos = if_else(soc_pos == 0, "1. Pas de contenu social", "2. Contenu social"))
+
+ggplot(rap) +
+ aes(x = Annee, y = total, fill = soc_pos) +
+ geom_col() +
+ scale_fill_manual(values = c(`1. Pas de contenu social` = "#ebd8c8", 
+`2. Contenu social` = "#F9B541")) +
+  labs(
+    y = "Nombre de titres",
+    title = "Rap francophone et considérations sociales depuis 2007 dans le top 100",
+    fill = "Contenu"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+sexe <- top_test %>% 
+  filter(genre == "1") %>% 
+  group_by(pol_pos, Annee) %>% 
+  mutate(pol_pos = as.factor(pol_pos)) %>% 
+  summarize(total = n())
+
+
+```
+
+```{r}
+rapp <- top_test %>% 
+  filter(genre > 1) %>% 
+  group_by(Annee) %>% 
+  summarize(pol = sum(pol),
+            soc = sum(soc))
+```
+
+```{r}
+topfr <- top %>% 
+  filter(genre %in% c("1","2","3")) %>% 
+  mutate(origine = ifelse(origine == 0L, 4L, origine))
+
+top_test <- topfr %>% 
+  filter(Annee > 2006 & Pos. < 101) %>% 
+  mutate(
+    pol = (replace(as.numeric(pol), is.na(as.numeric(pol)),0)),
+    soc = (replace(as.numeric(soc), is.na(as.numeric(soc)),0)),
+    genre = factor(ifelse(is.na(genre), 0, genre)),
+    sexe = factor(ifelse(is.na(sexe), 0, sexe)), 
+    temps = Annee - 2007,
+    Annee = factor(Annee),
+    soc_pos =  factor(if_else(soc > 0, 1, 0)),
+   pol_pos = factor(if_else(pol > 0, 1, 0)),
+   origine = factor(origine),
+   mvt = factor(mvt),
+   election = factor(election), 
+   nb = if_else(nb > 0, nb, 0L)
+  
+  )
+
+data <- top_test 
+
+data <- data %>% 
+  mutate(
+    tx_pol = if_else(nb > 0, pol / nb, 0),
+    tx_soc = if_else(nb > 0, soc / nb, 0)
+  ) 
+
+
+
+data$origine <- relevel(data$origine, ref = "3")
+data$Annee <- relevel(data$Annee, ref = "2016")
+data$mvt <- relevel(data$mvt, ref = "0")
+data$election <- relevel(data$election, ref = "0")
+```
+
+```{r}
+
+mod1 <- lm(pol ~ genre + origine + temps + nb + mvt + election + nb*genre, data = data)
+mod2 <- lm(pol ~ genre + origine + temps + nb + mvt + election , data = data)
+mod3 <- lm(pol ~ genre + origine + temps + mvt + election , data = data)
+
+
+pos <- lm(Pos. ~ sexe + genre + since + genre*temps - temps  , data = data)
+mod2 <- lm(soc ~ genre + sexe + annee, data = data)
+
+```
+
+```{r}
+mod2 <- lm(soc ~ genre + origine + temps, data = data)
+
+pos2 <- lm(Pos. ~ sexe + genre + since + soc*temps + genre*temps - temps  , data = data)
+```
+
+```{r}
+stargazer(mod1, mod2, type = "latex", title = "Reg linéaire pol",
+          out = "/Users/cocoticota/Dropbox/ENSAE/S5/Projet/reg100.tex",
+          label = "table:reg100")
+stargazer(pos, pos2, type = "latex", title = "Reg linéaire pos",
+          out = "/Users/cocoticota/Dropbox/ENSAE/S5/Projet/reg200.tex",
+          label = "table:reg200")
+
+```
+
+```{r}
+mod_logit1 <- glm(pol_pos ~ genre + sexe + annee, 
+                 data = data,
+                 family = binomial(link = "logit"))
+mod_logit2 <- glm(soc_pos ~ genre + sexe + annee, 
+                 data = data,
+                 family = binomial(link = "logit"))
+mod_logit3 <- glm(pol_pos ~ genre + sexe + genre*sexe + annee , 
+                 data = data,
+                 family = binomial(link = "logit"))
+mod_logit4 <- glm(soc_pos ~ genre + sexe + genre*sexe + annee , 
+                 data = data,
+                 family = binomial(link = "logit"))
+
+
+
+```
+
+```{r}
+stargazer(mod1, mod2, type = "latex", title = "Régression linéaire politique", label = "table:reg1", 
+          out = "/Users/cocoticota/Dropbox/ENSAE/S5/Projet/reg1.tex")
+
+stargazer(mod_logit1, mod_logit2, mod_logit3, mod_logit4, type = "latex", title = "Régression logit politique avec interaction", label = "table:reg5", 
+          out = "/Users/cocoticota/Dropbox/ENSAE/S5/Projet/logit.tex")
+```
+
+```{r}
+o1 <- exp(coef(mod_logit1))
+```
+
+```{r}
+top_test <- top_test %>% 
+   mutate(
+   soc_pos =  factor(if_else(soc > 0, 1, 0)),
+   pol_pos = factor(if_else(pol > 0, 1, 0))
+  
+    )
+data2 <- top_test %>% 
+  filter(Annee > 2015) %>% 
+  mutate(annee = factor(Annee)) %>% 
+  filter(genre != "0"  )
+mod3 <- lm(pol ~ genre + sexe + annee, data = data2)
+mod4 <- lm(soc ~ genre + sexe + annee, data = data2)
+```
+
+```{r}
+stargazer(mod1, mod3, mod2, mod4, type = "latex", title = "Régressions linéaires", label = "table:reg5", 
+          out = "/Users/cocoticota/Dropbox/ENSAE/S5/Projet/reg3.tex")
+```
